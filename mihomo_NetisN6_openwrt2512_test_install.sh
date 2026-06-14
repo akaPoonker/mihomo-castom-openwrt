@@ -1257,6 +1257,22 @@ return view.extend({
     }
 });
 EOF
+# === УСТАНОВКА ПАНЕЛИ УПРАВЛЕНИЯ METACUBEXD ===
+    echo "--> Установка графической панели управления Metacubexd..."
+    mkdir -p /etc/mihomo/UI
+    
+    # Сначала пробуем скачать напрямую с GitHub
+    if ! curl -skLf "https://github.com/MetaCubeX/metacubexd/releases/latest/download/compressed-dist.tgz" | tar -xz -C /etc/mihomo/UI >/dev/null 2>&1; then
+        echo "  -> Прямое скачивание не удалось, пробуем через зеркало..."
+        # Если напрямую не вышло, качаем через зеркало-прокси
+        if ! curl -skLf "https://mirror.ghproxy.com/https://github.com/MetaCubeX/metacubexd/releases/latest/download/compressed-dist.tgz" | tar -xz -C /etc/mihomo/UI >/dev/null 2>&1; then
+            log_warn "Не удалось установить панель управления автоматически. Вы сможете скачать её позже."
+        else
+            echo "  -> Установка через зеркало: OK"
+        fi
+    else
+        echo "  -> Прямая установка: OK"
+    fi
 }
 
 finalize_install() {
