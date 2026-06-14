@@ -271,7 +271,7 @@ dns:
     - 1.1.1.1
     - https://dns.google/dns-query
   nameserver-policy:
-    'geosite:category-gov-ru,ru,su,by,kz,am,private':
+    '+.ru,+.su,+.by,+.kz,+.am,+.xn--p1ai':
       - 77.88.8.8
       - 77.88.8.1
 
