@@ -331,7 +331,7 @@ rules:
   - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
 
   # Блокировка QUIC
-  - AND,((PROTOCOL,UDP),(DEST-PORT,443)),REJECT
+  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT
 
   # 2. ПОДКЛЮЧАЕМ ВНЕШНИЙ ФАЙЛ ПРАВИЛ (rules.txt)
   - RULE-SET,extra_rules,🚀 ВЫБОР СЕРВЕРА
