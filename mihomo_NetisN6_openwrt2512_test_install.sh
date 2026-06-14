@@ -1116,7 +1116,7 @@ return view.extend({
             self.updateVisibility(path);
             ui.hideModal();
         }).catch(function(err) {
-            if (err && err.message === 'Данные не получены') {
+            if (err) {
                 currentFile = path;
                 if (editor) { editor.setValue('', -1); editor.session.setMode(path.endsWith('.txt') ? "ace/mode/text" : "ace/mode/yaml"); }
                 self.renderTabBar(document.getElementById('mihomo-tab-bar'));
