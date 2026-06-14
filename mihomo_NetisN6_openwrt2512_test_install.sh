@@ -343,7 +343,7 @@ EOF
     echo "--> Создание скрипта обновления /usr/bin/update_servers.sh..."
     cat > /usr/bin/update_servers.sh <<'EOF'
 #!/bin/sh
-RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null -X POST -H "Authorization: Bearer 12345" "http://127.0.0.1:9090/providers/proxies/my_servers")
+RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null -X PUT -H "Authorization: Bearer 12345" "http://127.0.0.1:9090/providers/proxies/my_servers")
 if [ "$RESPONSE" -eq 204 ]; then
     echo "УСПЕШНО: Mihomo перечитал файл servs.txt и обновил серверы в памяти!"
 else
