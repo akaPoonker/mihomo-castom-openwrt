@@ -1283,8 +1283,20 @@ finalize_install() {
     echo "--> Выставление прав доступа..."
     chmod -R 755 /www/luci-static/resources/view/mihomo 2>/dev/null || true
     find /www/luci-static/resources/view/mihomo -type f -exec chmod 644 {} \; 2>/dev/null || true
+    chmod 644 /www/luci-static/resources/view/magitrickle/magitrickle.js 2>/dev/null || true
 
-    echo "--> Очистка кэша LuCI..."
+    echo "--> Принудительная активация Wi-Fi антенн..."
+    # Находим все радио-интерфейсы в системе и включаем их
+    if command -v uci >/dev/null 2>&1; then
+        uci show wireless 2>/dev/null | grep =wifi-device | cut -d. -f2 | cut -d= -f1 | while read -r radio; do
+            uci set wireless."$radio".disabled='0'
+        done
+        uci commit wireless
+        # Перезагружаем Wi-Fi стек в фоне
+        /sbin/wifi reload >/dev/null 2>&1 &
+    fi
+
+    echo "--> Очистка кэша LuCI и перезапуск сервисов..."
     rm -rf /tmp/luci-indexcache /tmp/luci-modulecache/
     /etc/init.d/rpcd restart > /dev/null 2>&1
     /etc/init.d/uhttpd restart > /dev/null 2>&1
