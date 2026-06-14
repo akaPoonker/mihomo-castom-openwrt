@@ -354,9 +354,13 @@ EOF
     chmod +x /usr/bin/update_servers.sh
 
     echo "--> Добавление кнопки в Пользовательские Команды (luci-app-commands)..."
-    uci add luci_commands command
+    touch /etc/config/luci_commands
+	uci add luci_commands command
     uci set luci_commands.@command[-1].name='Обновить серверы в Mihomo'
     uci set luci_commands.@command[-1].command='/usr/bin/update_servers.sh'
+	uci add luci_commands command
+    uci set luci_commands.@command[-1].name='Узнать текущий сервер'
+    uci set luci_commands.@command[-1].command='curl -s -H "Authorization: Bearer 12345" http://127.0.0.1:9090/proxies | grep -o '\''"now":"[^"]*"'\'' | uniq | cut -d'\''"'\'' -f4'
     uci commit luci_commands
 
     echo "--> Создание системной службы /etc/init.d/mihomo..."
