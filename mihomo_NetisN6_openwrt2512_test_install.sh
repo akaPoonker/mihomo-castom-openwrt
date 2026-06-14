@@ -21,9 +21,6 @@ step_fail() { echo -e "${RED}[FAIL]${NC}"; exit 1; }
 USE_APK=0
 if command -v apk > /dev/null 2>&1; then
     USE_APK=1
-else
-    log_error "Этот скрипт оптимизирован только для OpenWrt 25.12+ с менеджером пакетов apk!"
-    exit 1
 fi
 
 detect_mihomo_arch() {
@@ -62,7 +59,6 @@ install_deps() {
     local PKG_LOG="/tmp/install_deps.log"
 
     apk update > "$PKG_LOG" 2>&1 || true
-    # Устанавливаем пакеты напрямую
     apk add wget-ssl ca-certificates kmod-tun kmod-nft-tproxy kmod-nft-nat curl luci-app-commands >> "$PKG_LOG" 2>&1 || {
         log_error "Ошибка установки зависимостей:"; cat "$PKG_LOG"; rm -f "$PKG_LOG"; return 1;
     }
@@ -87,10 +83,11 @@ install_mihomo() {
         /etc/init.d/mihomo stop 2>/dev/null || true
     fi
 
-    MIHOMO_ARCH=$(detect_mihomo_arch)
+    if [ -z "${MIHOMO_ARCH+x}" ]; then
+        MIHOMO_ARCH=$(detect_mihomo_arch)
+    fi
     echo "--> Архитектура системы: $(uname -m) -> выбран файл: $MIHOMO_ARCH"
 
-    # Создаем структуру директорий
     mkdir -p "$MIHOMO_INSTALL_DIR" \
              /etc/mihomo/proxy-providers \
              /etc/mihomo/rule-providers \
@@ -101,7 +98,6 @@ install_mihomo() {
 
     echo "--> Определение последней версии ядра Mihomo..."
     local RELEASE_TAG
-    # Качаем напрямую с GitHub
     RELEASE_TAG=$(curl -skL -o /dev/null -w '%{url_effective}' https://github.com/MetaCubeX/mihomo/releases/latest | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     if [ -z "$RELEASE_TAG" ]; then
         log_error "Не удалось определить версию. Проверьте интернет-соединение."
@@ -110,7 +106,6 @@ install_mihomo() {
     echo "--> Последняя версия: $RELEASE_TAG"
 
     local FILENAME="mihomo-linux-${MIHOMO_ARCH}-${RELEASE_TAG}.gz"
-    # Скачивание файла ядра напрямую с GitHub
     local DOWNLOAD_URL="https://github.com/MetaCubeX/mihomo/releases/download/${RELEASE_TAG}/${FILENAME}"
     local TMP_FILE="/tmp/mihomo.gz"
 
@@ -135,7 +130,6 @@ install_mihomo() {
         return 1
     fi
 
-    # Создаем пустые шаблоны файлов серверов и правил
     touch /etc/mihomo/rule-files/servs.txt
     
     echo "--> Создание эталонного файла правил /etc/mihomo/rule-files/rules.txt..."
@@ -246,7 +240,6 @@ payload:
   - DOMAIN-SUFFIX,raw.githubusercontent.com
 EOF
 
-    # Создаем наш эталонный config.yaml
     echo "--> Создание эталонной конфигурации /etc/mihomo/config.yaml..."
     cat > /etc/mihomo/config.yaml <<'EOF'
 mode: rule
@@ -260,7 +253,6 @@ find-process-mode: off
 external-controller: 0.0.0.0:9090
 external-ui: ./UI
 secret: "12345"
-# Прямая ссылка на скачивание панели управления
 external-ui-url: "https://github.com/MetaCubeX/metacubexd/releases/latest/download/compressed-dist.tgz"
 routing-mark: 2
 
@@ -278,7 +270,6 @@ dns:
     - 8.8.8.8
     - 1.1.1.1
     - https://dns.google/dns-query
-  # Оптимизация СНГ CDN:
   nameserver-policy:
     'geosite:category-gov-ru,ru,su,by,kz,am,private':
       - 77.88.8.8
@@ -349,7 +340,6 @@ rules:
   - MATCH,Домашний интернет
 EOF
 
-    # Создаем скрипт обновления через API Mihomo для нашей кнопки
     echo "--> Создание скрипта обновления /usr/bin/update_servers.sh..."
     cat > /usr/bin/update_servers.sh <<'EOF'
 #!/bin/sh
@@ -659,279 +649,4 @@ return view.extend({
                 if (cachedRaw) {
                     var cached = JSON.parse(cachedRaw);
                     if (cached.version && (Date.now() - cached.timestamp < CACHE_TIME)) {
-                        this.renderUpdateStatus(cached.version, false);
-                        return;
-                    }
-                }
-            } catch (e) {}
-        }
-		
-		if (isManual) ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Проверка обновлений...'))]);
-		
-		var cmd = 'wget -q -O - "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null | grep -m1 \'"tag_name":\' | sed \'s/.*"\\(v[0-9.]*\\)".*/\\1/\'';
-		
-		fs.exec('/bin/sh', ['-c', cmd])
-			.then(function(res) {
-				if (isManual) ui.hideModal();
-				if (!res || typeof res !== 'object') throw new Error('Bad response');
-				var latestVersion = (res.stdout || '').trim().replace(/["'\s]/g, '');
-				if (!latestVersion || !latestVersion.match(/^v\d+\.\d+\.\d+$/)) {
-				    if (isManual) ui.addNotification(null, E('p', _('Ошибка: ') + latestVersion), 'error');
-				    return;
-				}
-                try { localStorage.setItem(CACHE_KEY, JSON.stringify({ version: latestVersion, timestamp: Date.now() })); } catch (e) {}
-				self.renderUpdateStatus(latestVersion, isManual);
-			})
-			.catch(function(err) {
-				if (isManual) {
-				    ui.hideModal();
-				    ui.addNotification(null, E('p', _('Ошибка: ') + err.message), 'error');
-				}
-			});
-	},
-	
-	handleUpdateMihomo: function() {
-		var self = this;
-		var latestVersion = this.latestVersion;
-		if (!latestVersion) return;
-		this.updateButton.textContent = _('Подождите...');
-		this.updateButton.disabled = true;
-		var arch = 'mipsle-softfloat';
-		var downloadUrl = 'https://github.com/MetaCubeX/mihomo/releases/download/' + latestVersion + '/mihomo-linux-' + arch + '-' + latestVersion + '.gz';
-		var steps = [
-			{ msg: _('Создание бэкапа...'), shell: 'cp -f /usr/bin/mihomo /tmp/mihomo.backup' },
-			{ msg: _('Остановка Mihomo...'), shell: '/etc/init.d/mihomo stop' },
-			{ msg: _('Скачивание архива %s...').format(latestVersion), shell: 'wget -q -O /tmp/mihomo.gz "' + downloadUrl + '" && test -s /tmp/mihomo.gz' },
-			{ msg: _('Распаковка архива...'), shell: '/bin/gzip -d -c /tmp/mihomo.gz > /tmp/mihomo_new 2>/dev/null && test -s /tmp/mihomo_new' },
-			{ msg: _('Выдача временных прав...'), shell: '/bin/chmod 755 /tmp/mihomo_new' },
-			{ msg: _('Проверка ядра...'), shell: '/tmp/mihomo_new -v 2>&1 || true' },
-			{ msg: _('Установка ядра...'), shell: '/bin/mv -f /tmp/mihomo_new /usr/bin/mihomo' },
-			{ msg: _('Выдача постоянных прав...'), shell: '/bin/chmod 755 /usr/bin/mihomo' },
-			{ msg: _('Запуск Mihomo...'), shell: '/etc/init.d/mihomo start' },
-			{ msg: _('Удаление бэкапа...'), shell: 'rm -f /tmp/mihomo.gz /tmp/mihomo.backup' }
-		];
-		var executeStep = function(index) {
-			if (index >= steps.length) {
-				self.showOutput(_('Обновлено успешно! Перезагрузка...'), false);
-				window.location.reload();
-				return Promise.resolve();
-			}
-			var currentStep = steps[index];
-			self.showOutput(currentStep.msg, false);
-			return fs.exec('/bin/sh', ['-c', currentStep.shell])
-				.then(function(res) {
-					if (!res || res.code !== 0) throw new Error('Err: ' + (res ? res.code : 'unknown'));
-					return executeStep(index + 1);
-				});
-		};
-		executeStep(0).catch(function(err) {
-            if (self.updateButton) {
-                self.updateButton.textContent = _('Ошибка. Повторить обновление?');
-                self.updateButton.disabled = false;
-                self.updateButton.onclick = ui.createHandlerFn(self, 'handleUpdateMihomo');
-            }
-            self.showOutput(_('Ошибка: %s').format(err.message), true);
-            fs.exec('/bin/sh', ['-c', 'cp -f /tmp/mihomo.backup /usr/bin/mihomo && /etc/init.d/mihomo start']).catch(function() {});
-        });
-	},
-
-	load: function() {
-		return Promise.all([
-			fs.read(MAIN_CONFIG).catch(function() { return ''; }),
-			callServiceList('mihomo').catch(function() { return {}; }),
-			fs.list(RULE_DIR).catch(function() { return []; })
-		]);
-	},
-	
-    render: function(data) {
-		data = data || [];
-        mainConfigContent = data[0] || '';
-        var serviceInfo = data[1] || {};
-        cachedRuleFiles = (data[2] || []).sort(function(a, b) { return a.name.localeCompare(b.name); });
-        var isRunning = !!(serviceInfo.mihomo && serviceInfo.mihomo.instances.main.running);
-        
-        var versionContainer = E('span', { 'id': 'mihomo-version', 'style': 'margin-left: 10px; font-size: 0.9em; opacity: 0.7;' }, _('Загрузка...'));
-        var latestVersionEl = E('span', { 'id': 'mihomo-latest-version', 'style': 'margin-left: 4px; font-size: 0.9em; opacity: 0.7; display: none;' }, '');
-        this.latestVersionEl = latestVersionEl;
-        var updateButton = E('button', { 'id': 'mihomo-update-btn', 'class': 'btn cbi-button-neutral', 'style': 'margin-left: 10px; padding: 0 0.6em; font-size: 0.9em;', 'disabled': true }, _('Проверить обновление'));
-        this.updateButton = updateButton;
-        
-        var statusBadge = isRunning 
-            ? E('span', { 
-                'class': 'label success', 
-                'style': 'margin-left: 14px; font-size: 0.85em; min-height: 1.7rem; padding: 0 1.9em; display: inline-flex; align-items: center; vertical-align: middle;' 
-            }, _('работает'))
-            : E('span', { 
-                'class': 'label', 
-                'style': 'margin-left: 14px; font-size: 0.85em; min-height: 1.7rem; padding: 0 1.9em; display: inline-flex; align-items: center; vertical-align: middle;' 
-            }, _('остановлен'));
-        
-        var serviceButton = isRunning
-            ? E('button', { 'class': 'btn cbi-button-reset', 'style': 'margin-left: 16px;', 'click': ui.createHandlerFn(this, 'handleServiceAction', 'stop') }, _('Остановить'))
-            : E('button', { 'class': 'btn cbi-button-positive btn-save-custom', 'style': 'margin-left: 16px;', 'click': ui.createHandlerFn(this, 'handleServiceAction', 'start') }, _('Запустить'));
-        
-        var header = E('div', { 'style': 'display: flex; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;' }, [
-            E('h2', { 'style': 'margin: 0;' }, _('Mihomo')), 
-            statusBadge, 
-            serviceButton, 
-            versionContainer, 
-            latestVersionEl,
-            updateButton
-        ]);
-		
-        var self = this;
-        this.getMihomoVersion().then(function(version) {
-            self.currentVersion = version;
-            var versionEl = document.getElementById('mihomo-version');
-            if (versionEl) versionEl.textContent = _('%s').format(version.replace('v', ''));
-            var updateBtn = document.getElementById('mihomo-update-btn');
-            if (updateBtn) {
-                updateBtn.disabled = false;
-                updateBtn.onclick = function() { self.checkForUpdates(true); }; 
-            }
-            self.checkForUpdates(false);
-        });
-        
-        var isDark = isLuciDarkMode();
-        var cssVariables = isDark ? `
-            :root {
-                --bg-tab: #2d2d2d;
-                --bg-tab-active: #1C1C1C;
-                --bg-toolbar: #1C1C1C;
-                --bg-input: #2d2d2d;
-                --text-main: #e0e0e0;
-                --text-dim: #969696;
-                --border-color: #444444;
-                --border-active: #444444;
-                --bg-output: #222222;
-                --bg-output-header: #333333;
-                --text-output: #f8f8f2;
-            }
-        ` : `
-            :root {
-                --bg-tab: #e0e0e0;
-                --bg-tab-active: #ffffff;
-                --bg-toolbar: #f5f5f5;
-                --bg-input: #ffffff;
-                --text-main: #333333;
-                --text-dim: #666666;
-                --border-color: #E0E0E0;
-                --border-active: #E0E0E0;
-                --bg-output: #ffffff;
-                --bg-output-header: #eeeeee;
-                --text-output: #333333;
-            }
-        `;
-
-        var style = E('style', {}, cssVariables + `
-            .btn, .cbi-button {
-                min-height: 1.8rem !important; 
-                display: inline-flex !important;
-                align-items: center;
-                justify-content: center;
-                vertical-align: middle;
-                box-sizing: border-box !important; 
-                padding: 0 1rem !important;
-                line-height: 1 !important;
-            }
-            #output-text {
-                font-size: 0.8rem !important;
-            }
-            .cbi-page-actions { display: none !important; }
-            .custom-actions { display: flex; gap: 0.5rem; }
-            .tab-bar { display: flex; flex-wrap: nowrap; background-color: var(--bg-tab); }
-            .tab-item { display: flex; align-items: center; padding: 0.6em 1.2em; cursor: pointer; background-color: var(--bg-tab); color: var(--text-dim); margin-right: 1px; font-size: 0.9em; border-top: 1px solid transparent; white-space: nowrap; user-select: none; box-sizing: border-box }
-            .tab-item:hover { background-color: var(--bg-toolbar); color: var(--text-main); }
-            .tab-item.active { background-color: var(--bg-tab-active); color: var(--text-main); border: 1px solid var(--border-active); }
-            .tab-close { margin-left: 0.6em; border-radius: 3px; padding: 0 0.3em; color: #999; font-weight: bold; }
-            .tab-close:hover { background-color: #c0392b; color: white; }
-            .tab-new { font-weight: bold; font-size: 1.2em; padding: 0.5em 0.8em; }
-            .toolbar { background-color: var(--bg-toolbar); border: 1px solid var(--border-color); padding: 0.8rem; color: var(--text-main); }
-            .toolbar-row { display: flex; gap: 0.8rem; align-items: center; }
-            .toolbar textarea { width: 100%; height: 6em; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); font-family: monospace; font-size: 0.9em; padding: 0.4em; }
-            .toolbar select { background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); padding: 0.4em; }
-            .toolbar-col { display: flex; flex-direction: column; }
-            .btn-save-custom { border-color: #5cb85c !important; color: #5cb85c !important; }
-            .btn-save-custom:hover { border-color: #5cb85c !important; }
-            .btn.cbi-button-action:hover { border-color: #5cb85c !important; }
-            .btn.cbi-button-reset:hover { border-color: #F62B12 !important; color: #F62B12 !important; }
-            .btn-generate { border-color: #5cb85c !important; color: #5cb85c !important; margin: auto 0; display: block; background: var(--bg-input); }
-            .btn-generate:hover { border-color: #5cb85c !important; }
-            .snippet-container { margin-top: 0; border: 1px solid var(--border-color); background: var(--bg-toolbar); padding: 0.8rem; display: none; }
-            .snippet-header { margin-bottom: 0.4rem; color: var(--text-main); font-size: 0.85em; }
-            .snippet-text { width: 100%; height: 9.5em; background: var(--bg-tab-active); color: var(--text-main); border: 1px solid var(--border-color); font-family: monospace; font-size: 0.9em; padding: 0.8em; resize: none; }
-            .output-box-close { background: transparent; border: none; color: var(--text-main); font-size: 1.5em; line-height: 1; cursor: pointer; margin-left: 1rem; padding: 0 0.4rem; }
-            .output-box-close:hover { color: #e74c3c !important; }
-			#ace_editor_container { width: 100%; height: 60vh; border: 1px solid var(--border-color); border-top: none; }
-        `);
-        
-        var tabBar = E('div', { 'id': 'mihomo-tab-bar', 'class': 'tab-bar' });
-        var toolbarContainer = E('div', { 'id': 'mihomo-toolbar' });
-        var editorContainer = E('div', { 'id': 'ace_editor_container' });
-        
-        var snippetContainer = E('div', { 'id': 'snippet-box', 'class': 'snippet-container', 'style': 'margin-top: 0.8rem' }, [
-            E('div', { 'class': 'snippet-header', 'style': 'opacity: 0.7' }, _('Чтобы Mihomo увидел файл, добавьте эту секцию в rule-providers:')),
-            E('textarea', { 'id': 'snippet-area', 'class': 'snippet-text', 'readonly': 'readonly', 'style': 'opacity: 0.8' }),
-            E('div', { 'style': 'margin-top: 0.8rem; display: flex; gap: 0.6rem;' }, [
-                E('button', { 'class': 'btn cbi-button-apply', 'click': ui.createHandlerFn(this, 'handleAutoAddSnippet') }, _('Добавить автоматически')),
-                E('button', { 'class': 'btn cbi-button-neutral', 'click': ui.createHandlerFn(this, 'handleCopySnippet') }, _('Скопировать текст'))
-            ])
-        ]);
-        
-        var buttonContainer = E('div', { 'id': 'bottom-buttons', 'class': 'custom-actions', 'style': 'margin-top: 1rem;' }, [
-            E('button', { 'class': 'btn cbi-button-neutral', 'click': ui.createHandlerFn(this, 'handleCheck') }, _('Проверить конфигурацию')),
-            E('button', { 'class': 'btn cbi-button-positive btn-save-custom', 'click': ui.createHandlerFn(this, 'handleSaveAndApply', isRunning) }, _('Сохранить')),
-            E('button', { 'class': 'btn cbi-button-neutral', 'click': ui.createHandlerFn(this, 'handleOpenDashboard', mainConfigContent) }, _('Открыть панель управления')),
-            E('button', { 'class': 'btn cbi-button-neutral', 'click': ui.createHandlerFn(this, 'handleShowLogs') }, _('Показать журнал'))
-        ]);
-        
-        var middleActions = E('div', { 'id': 'middle-actions', 'style': 'display: none; margin-top: 0.8rem;' }, [
-            E('button', { 'class': 'btn cbi-button-positive btn-save-custom', 'click': ui.createHandlerFn(this, 'handleSaveAndApply', isRunning) }, _('Сохранить'))
-        ]);
-        
-        var outputBox = E('div', { 'id': 'output-box', 'style': 'display: none; margin-top: 1.2rem; border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden;' }, [
-            E('div', { 'style': 'background: var(--bg-output-header); color: var(--text-output); padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center;' }, [
-                E('strong', { 'style': 'font-size: 0.9em' }, _('Вывод:')),
-                E('button', { 'class': 'output-box-close', 'click': function() { document.getElementById('output-box').style.display = 'none'; } }, '×')
-            ]),
-            E('pre', { 'id': 'output-text', 'style': 'margin: 0; padding: 1rem; background: var(--bg-output); color: var(--text-output); font-family: monospace; font-size: 1em; white-space: pre-wrap; word-wrap: break-word; max-height: 25rem; overflow-y: auto;' }, '')
-        ]);
-        
-        loadScript(ACE_DIR + 'ace.js').then(function() {
-            ace.config.set('basePath', ACE_DIR);
-            editor = ace.edit("ace_editor_container");
-            var theme = isDark ? "ace/theme/merbivore_soft" : "ace/theme/tomorrow";
-            editor.setTheme(theme);
-            editor.session.setMode("ace/mode/yaml");
-            editor.setOptions({ 
-				fontSize: "0.95em", 
-				showPrintMargin: false, 
-				wrap: true, 
-				tabSize: 2, 
-				useSoftTabs: true,
-				highlightActiveLine: false
-			});
-            editor.setValue(mainConfigContent, -1);
-            setTimeout(function() { editor.resize(); }, 100);
-        }).catch(console.error);
-        
-        this.renderTabBar(tabBar);
-        this.renderToolbar(toolbarContainer, MAIN_CONFIG);
-        setTimeout(function() { this.updateVisibility(MAIN_CONFIG); }.bind(this), 100);
-        
-        return E('div', { 'class': 'cbi-map' }, [
-            header, style, tabBar, toolbarContainer, editorContainer,
-            middleActions, snippetContainer, buttonContainer, outputBox
-        ]);
-    },
-    
-    updateVisibility: function(filePath) {
-        var isMain = (filePath === MAIN_CONFIG);
-        document.getElementById('bottom-buttons').style.display = isMain ? 'flex' : 'none';
-        document.getElementById('middle-actions').style.display = isMain ? 'none' : 'block';
-        var snippetBox = document.getElementById('snippet-box');
-        if (isMain) {
-            snippetBox.style.display = 'none';
-        } else {
-            var baseName = filePath.split('/').pop().replace(/\.(yaml|txt)$/, '');
-            var providerName = ba
+                        this
