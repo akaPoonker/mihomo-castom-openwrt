@@ -1,6 +1,6 @@
 #!/bin/sh
 
-SCRIPT_VERSION="v0.1.7-netisn6-openwrt25.12"
+SCRIPT_VERSION="v0.1.7-netisn6-openwrt25.12-akaPoonker"
 
 MIHOMO_INSTALL_DIR="/etc/mihomo"
 MIHOMO_BIN="/usr/bin/mihomo"
@@ -21,6 +21,9 @@ step_fail() { echo -e "${RED}[FAIL]${NC}"; exit 1; }
 USE_APK=0
 if command -v apk > /dev/null 2>&1; then
     USE_APK=1
+else
+    log_error "Этот скрипт оптимизирован только для OpenWrt 25.12+ с менеджером пакетов apk!"
+    exit 1
 fi
 
 detect_mihomo_arch() {
@@ -55,11 +58,11 @@ detect_mihomo_arch() {
 }
 
 install_deps() {
-    log_info "Установка зависимостей через apk..."
+    log_info "Установка системных зависимостей через apk..."
     local PKG_LOG="/tmp/install_deps.log"
 
     apk update > "$PKG_LOG" 2>&1 || true
-    # Устанавливаем wget-ssl, curl, ca-certificates и luci-app-commands
+    # Устанавливаем пакеты напрямую
     apk add wget-ssl ca-certificates kmod-tun kmod-nft-tproxy kmod-nft-nat curl luci-app-commands >> "$PKG_LOG" 2>&1 || {
         log_error "Ошибка установки зависимостей:"; cat "$PKG_LOG"; rm -f "$PKG_LOG"; return 1;
     }
@@ -76,7 +79,7 @@ install_mihomo() {
     AVAIL_ROOT_KB=$(df -k "$INSTALL_DIR_PATH" | awk 'NR==2 {print $4}')
 
     if [ "$AVAIL_ROOT_KB" -lt "$REQ_ROOT_KB" ]; then
-        log_error "Недостаточно места на диске! Доступно $((AVAIL_ROOT_KB/1024)) MB."
+        log_error "Недостаточно места во флеш-памяти! Доступно $((AVAIL_ROOT_KB/1024)) MB."
         return 1
     fi
 
@@ -84,11 +87,10 @@ install_mihomo() {
         /etc/init.d/mihomo stop 2>/dev/null || true
     fi
 
-    if [ -z "${MIHOMO_ARCH+x}" ]; then
-        MIHOMO_ARCH=$(detect_mihomo_arch)
-    fi
+    MIHOMO_ARCH=$(detect_mihomo_arch)
     echo "--> Архитектура системы: $(uname -m) -> выбран файл: $MIHOMO_ARCH"
 
+    # Создаем структуру директорий
     mkdir -p "$MIHOMO_INSTALL_DIR" \
              /etc/mihomo/proxy-providers \
              /etc/mihomo/rule-providers \
@@ -97,24 +99,24 @@ install_mihomo() {
 
     echo "$MIHOMO_ARCH" > /etc/mihomo/.arch
 
-    echo "--> Определение последней версии Mihomo..."
+    echo "--> Определение последней версии ядра Mihomo..."
     local RELEASE_TAG
-    # Качаем через зеркало ghproxy
-    RELEASE_TAG=$(curl -skL -o /dev/null -w '%{url_effective}' https://mirror.ghproxy.com/https://github.com/MetaCubeX/mihomo/releases/latest | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    # Качаем напрямую с GitHub
+    RELEASE_TAG=$(curl -skL -o /dev/null -w '%{url_effective}' https://github.com/MetaCubeX/mihomo/releases/latest | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     if [ -z "$RELEASE_TAG" ]; then
-        log_error "Не удалось определить версию через зеркало. Проверьте интернет."
+        log_error "Не удалось определить версию. Проверьте интернет-соединение."
         return 1
     fi
     echo "--> Последняя версия: $RELEASE_TAG"
 
     local FILENAME="mihomo-linux-${MIHOMO_ARCH}-${RELEASE_TAG}.gz"
-    # Скачивание файла ядра строго через зеркало!
-    local DOWNLOAD_URL="https://mirror.ghproxy.com/https://github.com/MetaCubeX/mihomo/releases/download/${RELEASE_TAG}/${FILENAME}"
+    # Скачивание файла ядра напрямую с GitHub
+    local DOWNLOAD_URL="https://github.com/MetaCubeX/mihomo/releases/download/${RELEASE_TAG}/${FILENAME}"
     local TMP_FILE="/tmp/mihomo.gz"
 
-    log_info "Скачивание архива $FILENAME через зеркало..."
+    log_info "Скачивание архива $FILENAME напрямую с GitHub..."
     if ! curl -skLf --retry 3 --retry-delay 2 "$DOWNLOAD_URL" -o "$TMP_FILE" >/dev/null 2>&1; then
-        log_error "Ошибка скачивания!"
+        log_error "Ошибка скачивания! Проверьте интернет."
         return 1
     fi
 
@@ -133,7 +135,7 @@ install_mihomo() {
         return 1
     fi
 
-    # Создаем файлы данных по умолчанию
+    # Создаем пустые шаблоны файлов серверов и правил
     touch /etc/mihomo/rule-files/servs.txt
     
     echo "--> Создание эталонного файла правил /etc/mihomo/rule-files/rules.txt..."
@@ -244,6 +246,7 @@ payload:
   - DOMAIN-SUFFIX,raw.githubusercontent.com
 EOF
 
+    # Создаем наш эталонный config.yaml
     echo "--> Создание эталонной конфигурации /etc/mihomo/config.yaml..."
     cat > /etc/mihomo/config.yaml <<'EOF'
 mode: rule
@@ -257,8 +260,8 @@ find-process-mode: off
 external-controller: 0.0.0.0:9090
 external-ui: ./UI
 secret: "12345"
-# Ссылка на авто-скачивание панели управления через прокси-зеркало
-external-ui-url: "https://mirror.ghproxy.com/https://github.com/MetaCubeX/metacubexd/releases/latest/download/compressed-dist.tgz"
+# Прямая ссылка на скачивание панели управления
+external-ui-url: "https://github.com/MetaCubeX/metacubexd/releases/latest/download/compressed-dist.tgz"
 routing-mark: 2
 
 profile:
@@ -275,6 +278,7 @@ dns:
     - 8.8.8.8
     - 1.1.1.1
     - https://dns.google/dns-query
+  # Оптимизация СНГ CDN:
   nameserver-policy:
     'geosite:category-gov-ru,ru,su,by,kz,am,private':
       - 77.88.8.8
@@ -454,23 +458,23 @@ EOF
 
     echo "--> Определение последней версии ACE Editor..."
     local LATEST_ACE_VER
-    LATEST_ACE_VER=$(curl -skL "https://mirror.ghproxy.com/https://api.cdnjs.com/libraries/ace" | grep -o '"version":"[^"]*"' | cut -d'"' -f4 | head -1)
+    LATEST_ACE_VER=$(curl -skL "https://api.cdnjs.com/libraries/ace" | grep -o '"version":"[^"]*"' | cut -d'"' -f4 | head -1)
     if [ -z "$LATEST_ACE_VER" ]; then
         LATEST_ACE_VER="1.43.3"
     else
         echo "--> Актуальная версия ACE: $LATEST_ACE_VER"
     fi
 
-    log_info "Скачивание файлов ACE Editor $LATEST_ACE_VER через зеркало..."
+    log_info "Скачивание файлов ACE Editor $LATEST_ACE_VER напрямую с GitHub..."
     local CDNJS_ACE_VER="1.43.6"
     for file in ace.js theme-merbivore_soft.js theme-tomorrow.js mode-yaml.js worker-yaml.js; do
         local dest="${ACE_PATH}/${file}"
         local success=0
         
-        # Скачиваем файлы ACE строго через прокси-зеркало!
-        for url in "https://mirror.ghproxy.com/https://cdn.jsdelivr.net/npm/ace-builds@${LATEST_ACE_VER}/src-min-noconflict/${file}" \
-                   "https://mirror.ghproxy.com/https://raw.githubusercontent.com/ajaxorg/ace-builds/master/src-min-noconflict/${file}" \
-                   "https://mirror.ghproxy.com/https://cdnjs.cloudflare.com/ajax/libs/ace/${CDNJS_ACE_VER}/${file}"; do
+        # Скачиваем файлы ACE напрямую
+        for url in "https://cdn.jsdelivr.net/npm/ace-builds@${LATEST_ACE_VER}/src-min-noconflict/${file}" \
+                   "https://raw.githubusercontent.com/ajaxorg/ace-builds/master/src-min-noconflict/${file}" \
+                   "https://cdnjs.cloudflare.com/ajax/libs/ace/${CDNJS_ACE_VER}/${file}"; do
             
             echo -n "  -> Скачивание $file ... "
             if curl -skLf --connect-timeout 5 --max-time 30 -o "$dest" "$url" || wget -q -T 5 -O "$dest" "$url"; then
@@ -484,7 +488,7 @@ EOF
         done
 
         if [ "$success" -eq 0 ]; then
-            log_error "Не удалось скачать $file ни из одного источника."
+            log_error "Не удалось скачать $file."
             return 1
         fi
     done
@@ -664,7 +668,7 @@ return view.extend({
 		
 		if (isManual) ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Проверка обновлений...'))]);
 		
-		var cmd = 'wget -q -O - "https://mirror.ghproxy.com/https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null | grep -m1 \'"tag_name":\' | sed \'s/.*"\\(v[0-9.]*\\)".*/\\1/\'';
+		var cmd = 'wget -q -O - "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null | grep -m1 \'"tag_name":\' | sed \'s/.*"\\(v[0-9.]*\\)".*/\\1/\'';
 		
 		fs.exec('/bin/sh', ['-c', cmd])
 			.then(function(res) {
@@ -693,7 +697,7 @@ return view.extend({
 		this.updateButton.textContent = _('Подождите...');
 		this.updateButton.disabled = true;
 		var arch = 'mipsle-softfloat';
-		var downloadUrl = 'https://mirror.ghproxy.com/https://github.com/MetaCubeX/mihomo/releases/download/' + latestVersion + '/mihomo-linux-' + arch + '-' + latestVersion + '.gz';
+		var downloadUrl = 'https://github.com/MetaCubeX/mihomo/releases/download/' + latestVersion + '/mihomo-linux-' + arch + '-' + latestVersion + '.gz';
 		var steps = [
 			{ msg: _('Создание бэкапа...'), shell: 'cp -f /usr/bin/mihomo /tmp/mihomo.backup' },
 			{ msg: _('Остановка Mihomo...'), shell: '/etc/init.d/mihomo stop' },
@@ -930,376 +934,4 @@ return view.extend({
             snippetBox.style.display = 'none';
         } else {
             var baseName = filePath.split('/').pop().replace(/\.(yaml|txt)$/, '');
-            var providerName = baseName + '-list:';
-            if (mainConfigContent.includes(providerName)) {
-                snippetBox.style.display = 'none';
-            } else {
-                document.getElementById('snippet-area').value = generateProviderSnippet(filePath);
-                snippetBox.style.display = 'block';
-            }
-        }
-    },
-    
-	handleAutoAddSnippet: function() {
-		var self = this;
-		var snippet = generateProviderSnippet(currentFile);
-		if (!snippet) return;
-		ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Добавление...'))]);
-		var indentedSnippet = snippet.split('\n').map(function(line) { return '  ' + line; }).join('\n');
-		fs.read(MAIN_CONFIG).then(function(content) {
-			var newContent = content || '';
-			var sectionMatch = newContent.match(/^rule-providers:\s*$/m);
-			if (!sectionMatch) {
-				var proxiesMatch = newContent.match(/^proxies:\s*$/m);
-				var pgMatch = newContent.match(/^proxy-groups:\s*$/m);
-				var lastIdx = Math.max(proxiesMatch ? proxiesMatch.index + proxiesMatch[0].length : -1, pgMatch ? pgMatch.index + pgMatch[0].length : -1);
-				if (lastIdx > -1) {
-					var textAfter = newContent.substring(lastIdx);
-					var nextMatch = textAfter.match(/\n(?![ \t])[a-z][^:\n]*:/i);
-					if (nextMatch) {
-						var insIdx = lastIdx + nextMatch.index;
-						newContent = newContent.substring(0, insIdx) + '\nrule-providers:\n\n' + indentedSnippet + '\n' + newContent.substring(insIdx);
-					} else {
-						newContent = newContent.trimEnd() + '\n\nrule-providers:\n\n' + indentedSnippet + '\n';
-					}
-				} else {
-					if (newContent && !newContent.endsWith('\n')) newContent += '\n';
-					newContent += '\nrule-providers:\n\n' + indentedSnippet + '\n';
-				}
-			} else {
-				var secEnd = sectionMatch.index + sectionMatch[0].length;
-				var textAfter = newContent.substring(secEnd);
-				var nextMatch = textAfter.match(/\n(?![ \t])[a-z][^:\n]*:/i);
-				if (nextMatch) {
-					var insIdx = secEnd + nextMatch.index;
-					newContent = newContent.substring(0, insIdx) + '\n' + indentedSnippet + '\n' + newContent.substring(insIdx);
-				} else {
-					newContent = newContent.substring(0, secEnd).replace(/\n+$/, '\n') + '\n' + indentedSnippet + '\n';
-				}
-			}
-			mainConfigContent = newContent;
-			return fs.write(MAIN_CONFIG, newContent);
-		}).then(function() {
-			self.updateVisibility(currentFile);
-			ui.hideModal();
-		}).catch(function(err) {
-			ui.hideModal();
-			ui.addNotification(null, E('p', _('Ошибка: ') + err.message), 'error');
-		});
-	},
-    
-    handleCopySnippet: function() {
-        var area = document.getElementById('snippet-area');
-        if (area) { area.select(); document.execCommand('copy'); }
-    },
-    
-    renderToolbar: function(container, filePath) {
-        L.dom.content(container, []);
-        if (filePath === MAIN_CONFIG) { container.style.display = 'none'; return; }
-        
-        container.style.display = 'block';
-        container.className = 'toolbar';
-        var self = this;
-        
-        if (filePath.endsWith('.txt')) {
-            var input = E('textarea', { 'placeholder': 'google.com\nyoutube.com' });
-            var suffixCheck = E('input', { 'type': 'checkbox', 'id': 'suffixCheck', 'checked': true });
-            
-			var row = E('div', { 'class': 'toolbar-row' }, [
-				E('div', { 'style': 'flex-grow: 1;' }, input),
-				E('div', { 'class': 'toolbar-col', 'style': 'min-width: 10rem; display: flex; flex-direction: column; justify-content: space-between;' }, [
-					E('label', { 'for': 'suffixCheck', 'style': 'align-self: flex-start; font-size: 0.85em;' }, [ suffixCheck, ' . (дубликаты с точкой)' ]),
-					E('button', { 'class': 'btn btn-generate', 'style': 'align-self: center;', 'click': function() { self.handleAppendList(input.value, suffixCheck.checked); input.value = ''; } }, _('Добавить'))
-				])
-			]);
-            container.appendChild(row);
-        } else {
-            var input = E('textarea', { 'placeholder': 'google.com\n104.28.0.0/16\n*.example.com' });
-            var typeSelect = E('select', { 'style': 'font-size: 0.9em' }, [
-                E('option', { 'value': 'Auto' }, 'Auto'),
-                E('option', { 'value': 'DOMAIN-SUFFIX' }, 'DOMAIN-SUFFIX'),
-                E('option', { 'value': 'DOMAIN' }, 'DOMAIN'),
-                E('option', { 'value': 'DOMAIN-KEYWORD' }, 'DOMAIN-KEYWORD'),
-                E('option', { 'value': 'DOMAIN-WILDCARD' }, 'DOMAIN-WILDCARD'),
-                E('option', { 'value': 'IP-CIDR' }, 'IP-CIDR'),
-                E('option', { 'value': 'IP-CIDR6' }, 'IP-CIDR6')
-            ]);
-            var row = E('div', { 'class': 'toolbar-row' }, [
-                E('div', { 'style': 'flex-grow: 1;' }, input),
-                E('div', { 'class': 'toolbar-col' }, [ typeSelect ]),
-                E('div', { 'class': 'toolbar-col', 'style': 'min-width: 8rem; justify-content: flex-end;' }, [
-                    E('button', { 'class': 'btn btn-generate', 'click': function() { self.handleGenerateRules(input.value, typeSelect.value); input.value = ''; } }, _('Создать'))
-                ])
-            ]);
-            container.appendChild(row);
-        }
-    },
-    
-    handleAppendList: function(text, addSuffix) {
-        if (!editor || !text.trim()) return;
-        var lines = text.trim().split('\n');
-        var result = [];
-        lines.forEach(function(line) {
-            line = line.trim();
-            if (!line) return;
-            result.push(line);
-            if (addSuffix && !line.startsWith('.')) result.push('.' + line);
-        });
-        if (result.length > 0) {
-            editor.navigateFileEnd();
-            var doc = editor.getValue();
-            var prefix = (doc.length > 0 && !doc.endsWith('\n')) ? '\n' : '';
-            editor.insert(prefix + result.join('\n') + '\n');
-            editor.focus();
-        }
-    },
-    
-    handleGenerateRules: function(text, type) {
-        if (!editor || !text.trim()) return;
-        var lines = text.trim().split('\n');
-        var newRules = [];
-        lines.forEach(function(line) {
-            line = line.trim();
-            if (!line) return;
-            var currentType = type === 'Auto' ? detectRuleType(line) : type;
-            if (currentType === 'IP-CIDR' && !line.includes('/')) line += '/32';
-            newRules.push(`  - ${currentType},${line}`);
-        });
-        if (newRules.length === 0) return;
-        var content = content = editor.getValue();
-        var linesContent = content.split('\n');
-        var payloadIndex = linesContent.findIndex(function(l) { return l.trim() === 'payload:'; });
-        if (payloadIndex !== -1) {
-            editor.gotoLine(linesContent.length + 1, 0);
-            editor.insert(newRules.join('\n') + '\n');
-        } else {
-            var prefix = (content.length > 0 && !content.endsWith('\n')) ? '\n\n' : '';
-            editor.navigateFileEnd();
-            editor.insert(prefix + 'payload:\n' + newRules.join('\n') + '\n');
-        }
-        editor.focus();
-    },
-    
-    renderTabBar: function(container) {
-        L.dom.content(container, []);
-        var self = this;
-        var mainTab = E('div', { 'class': (currentFile === MAIN_CONFIG) ? 'tab-item active' : 'tab-item', 'click': ui.createHandlerFn(this, 'handleTabClick', MAIN_CONFIG) }, E('span', {}, 'Конфигурация'));
-        container.appendChild(mainTab);
-        
-        cachedRuleFiles.forEach(function(file) {
-            if (file.type === 'file') {
-                var fullPath = RULE_DIR + file.name;
-                if (!validatePath(fullPath, RULE_DIR)) return;
-                var isActive = (currentFile === fullPath);
-                var safeName = escapeHtml(sanitizeTabName(file.name));
-                var tabContent = [E('span', {}, safeName)];
-                if (isActive) {
-                    tabContent.push(E('span', { 'class': 'tab-close', 'title': _('Удалить'), 'click': ui.createHandlerFn(self, 'handleDeleteFile', fullPath) }, '×'));
-                }
-                var tab = E('div', { 'class': isActive ? 'tab-item active' : 'tab-item', 'click': ui.createHandlerFn(self, 'handleTabClick', fullPath) }, tabContent);
-                container.appendChild(tab);
-            }
-        });
-        var newTab = E('div', { 'class': 'tab-item tab-new', 'title': _('Создать новый'), 'click': ui.createHandlerFn(this, 'handleCreateFile') }, '+');
-        container.appendChild(newTab);
-    },
-    
-    handleTabClick: function(path, ev) {
-        if (!validatePath(path, '/etc/mihomo/')) { ui.addNotification(null, E('p', _('Недопустимый путь')), 'error'); return; }
-        if (ev && ev.target.classList.contains('tab-close')) { ev.stopPropagation(); return; }
-        if (path === currentFile) return;
-        
-        var self = this;
-        ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Загрузка...'))]);
-        fs.read(path).then(function(content) {
-            currentFile = path;
-            if (editor) {
-                editor.setValue(content || '', -1);
-                editor.session.setMode(path.endsWith('.txt') ? "ace/mode/text" : "ace/mode/yaml");
-            }
-            self.renderTabBar(document.getElementById('mihomo-tab-bar'));
-            self.renderToolbar(document.getElementById('mihomo-toolbar'), path);
-            self.updateVisibility(path);
-            ui.hideModal();
-        }).catch(function(err) {
-            if (err && err.message === 'Данные не получены') {
-                currentFile = path;
-                if (editor) { editor.setValue('', -1); editor.session.setMode(path.endsWith('.txt') ? "ace/mode/text" : "ace/mode/yaml"); }
-                self.renderTabBar(document.getElementById('mihomo-tab-bar'));
-                self.renderToolbar(document.getElementById('mihomo-toolbar'), path);
-                self.updateVisibility(path);
-            } else {
-                ui.addNotification(null, E('p', _('Ошибка: ') + (err.message || 'Error')), 'error');
-            }
-            ui.hideModal();
-        });
-    },
-    
-    handleCreateFile: function() {
-        var self = this;
-        var nameInput = E('input', { 'type': 'text', 'style': 'width: 100%;', 'placeholder': 'my-rules' });
-        var typeSelect = E('select', { 'style': 'width: 100%;' }, [
-            E('option', { 'value': '.yaml' }, 'Набор правил (.yaml)'),
-            E('option', { 'value': '.txt' }, 'Простой список (.txt)')
-        ]);
-        var footer = E('div', { 'class': 'right', 'style': 'margin-top: 1.5rem;' }, [
-            E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Отмена')), ' ',
-            E('button', { 'class': 'btn cbi-button-positive btn-save-custom', 'click': function() {
-                var filename = nameInput.value.trim();
-                if (!filename || !validateFilename(filename)) { ui.addNotification(null, E('p', _('Некорректное имя')), 'error'); return; }
-                var fullPath = RULE_DIR + filename + typeSelect.value;
-                if (!validatePath(fullPath, RULE_DIR)) { ui.addNotification(null, E('p', _('Недопустимый путь')), 'error'); return; }
-                ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Создание...'))]);
-                fs.stat(fullPath).then(function() {
-                    ui.hideModal(); ui.addNotification(null, E('p', _('Файл уже существует')), 'error');
-                }).catch(function() {
-                    fs.write(fullPath, '').then(function() { return fs.list(RULE_DIR); }).then(function(files) {
-                        cachedRuleFiles = (files || []).sort(function(a, b) { return a.name.localeCompare(b.name); });
-                        self.handleTabClick(fullPath);
-                    }).catch(function(err) { ui.hideModal(); ui.addNotification(null, E('p', _('Ошибка: ') + err.message), 'error'); });
-                });
-            }}, _('Создать'))
-        ]);
-        ui.showModal(_('Новый файл правил'), [
-            E('div', {}, [
-                E('div', { 'style': 'display: flex; align-items: center; margin-bottom: 0.8rem;' }, [ E('label', { 'style': 'min-width: 10rem; margin-right: 0.8rem;' }, _('Имя файла:')), nameInput ]),
-                E('div', { 'style': 'display: flex; align-items: center;' }, [ E('label', { 'style': 'min-width: 10rem; margin-right: 0.8rem;' }, _('Тип файла:')), typeSelect ])
-            ]), footer
-        ]);
-        nameInput.focus();
-    },
-    
-    handleDeleteFile: function(path) {
-        if (!isSafeRulePath(path)) { ui.addNotification(null, E('p', _('Ошибка пути')), 'error'); return; }
-        if (!confirm(_('Удалить %s?').format(path.split('/').pop()))) return;
-        var self = this;
-        ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Удаление...'))]);
-        fs.remove(path).then(function() { return fs.list(RULE_DIR); }).then(function(files) {
-            cachedRuleFiles = (files || []).sort(function(a, b) { return a.name.localeCompare(b.name); });
-            if (currentFile === path) self.handleTabClick(MAIN_CONFIG);
-            else { self.renderTabBar(document.getElementById('mihomo-tab-bar')); ui.hideModal(); }
-        }).catch(function(err) { ui.hideModal(); ui.addNotification(null, E('p', _('Ошибка: ') + err.message), 'error'); });
-    },
-    
-    handleSaveAndApply: function(wasRunning) {
-        if (this.isProcessing) return Promise.reject(new Error('Busy'));
-        if (!editor) return;
-        this.isProcessing = true;
-        var self = this;
-        var content = editor.getValue();
-        if (currentFile === MAIN_CONFIG) mainConfigContent = content;
-        ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Сохранение...'))]);
-        fs.write(currentFile, content).then(function() {
-            if (currentFile === MAIN_CONFIG) {
-                return fs.exec('/usr/bin/mihomo', ['-d', '/etc/mihomo', '-t', MAIN_CONFIG]).then(function(res) {
-                    if (res.code !== 0) throw new Error((res.stdout || '') + (res.stderr || ''));
-                    if (wasRunning) return fs.exec('/etc/init.d/mihomo', ['restart']);
-                });
-            }
-        }).then(function() {
-            ui.hideModal();
-            if (currentFile === MAIN_CONFIG) setTimeout(function() { window.location.reload(); }, RELOAD_DELAY);
-        }).catch(function(err) { self.showOutput(err.message, true); ui.hideModal(); }).finally(function() { self.isProcessing = false; });
-    },
-    
-    handleCheck: function() {
-        if (currentFile !== MAIN_CONFIG || !editor) return;
-        var self = this;
-        ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Проверка...'))]);
-        fs.write(MAIN_CONFIG, editor.getValue())
-            .then(function() { return fs.exec('/usr/bin/mihomo', ['-d', '/etc/mihomo', '-t']); })
-            .then(function(res) { self.showOutput((res.stdout || '') + (res.stderr || ''), res.code !== 0); ui.hideModal(); })
-            .catch(function(e) { self.showOutput(e.message, true); ui.hideModal(); });
-    },
-    
-    showOutput: function(text, isError) {
-        var box = document.getElementById('output-box');
-        var out = document.getElementById('output-text');
-        if (box && out) {
-            out.textContent = text ? text.trim() : '(Пусто)';
-            out.style.color = isError ? '#f92672' : 'var(--text-output)';
-            box.style.display = 'block';
-            box.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        }
-    },
-    
-	handleServiceAction: function(act) {
-		if (!VALID_ACTIONS.includes(act)) return;
-		var self = this;
-		ui.showModal(null, [E('p', { 'class': 'spinning' }, _('Выполнение...'))]);
-		fs.exec('/etc/init.d/mihomo', [act]).then(function() { window.location.reload(); })
-			.catch(function(e) { ui.hideModal(); ui.addNotification(null, E('p', e.message), 'error'); });
-	},
-    
-    handleShowLogs: function() {
-        var self = this;
-        fs.exec('/sbin/logread', ['-e', 'mihomo']).then(function(res) {
-            var logContent = res.stdout;
-            if (!logContent && res.code !== 0) {
-                logContent = "Записей о 'mihomo' в системном журнале не найдено.\nВозможно, служба не запущена.";
-            } else if (!logContent) {
-                logContent = "Журнал пуст.";
-            }
-
-            self.showOutput(logContent, false);
-        }).catch(function(err) {
-            self.showOutput("Ошибка чтения журнала: " + err.message, true);
-        });
-    },
-    
-    handleOpenDashboard: function(content) {
-        var hostname = window.location.hostname;
-        var port = '9090';
-        try {
-            var match = content.match(/external-controller:\s*([0-9\.]+):(\d+)/);
-            if (match && match[1] && match[2]) {
-                var extractedIp = match[1].trim();
-                if (/^(\d{1,3}\.){3}\d{1,3}$/.test(extractedIp) && extractedIp !== '0.0.0.0') hostname = extractedIp;
-                var portNum = parseInt(match[2].trim(), 10);
-                if (!isNaN(portNum) && portNum >= 1 && portNum <= 65535) port = match[2].trim();
-            }
-        } catch (e) {}
-        window.open(`http://${hostname}:${port}/ui/`, '_blank');
-    }
-});
-EOF
-}
-
-finalize_install() {
-    echo "--> Выставление прав доступа..."
-    chmod -R 755 /www/luci-static/resources/view/mihomo 2>/dev/null || true
-    find /www/luci-static/resources/view/mihomo -type f -exec chmod 644 {} \; 2>/dev/null || true
-
-    echo "--> Очистка кэша LuCI..."
-    rm -rf /tmp/luci-indexcache /tmp/luci-modulecache/
-    /etc/init.d/rpcd restart > /dev/null 2>&1
-    /etc/init.d/uhttpd restart > /dev/null 2>&1
-    /etc/init.d/mihomo restart > /dev/null 2>&1
-}
-
-main() {
-    clear
-    log_done "=== Mixomo OpenWrt $SCRIPT_VERSION от Internet Helper ==="
-    echo ""
-
-    log_step "[1/3] Установка зависимостей"
-    install_deps || step_fail
-    echo ""
-
-    log_step "[2/3] Установка Mihomo"
-    install_mihomo || step_fail
-    echo ""
-    
-    log_step "[3/3] Завершение"
-    finalize_install || step_fail
-    echo ""
-
-    log_done "┌───────────────────────────────────────────────────────────────────────┐"
-    log_done "│ 1. Выйдите из LuCI и войдите снова                                    │"
-    log_done "├───────────────────────────────────────────────────────────────────────┤"
-    log_done "│ 2. Службы или Services → Mihomo → Настройте конфигурацию              │"
-    log_done "└───────────────────────────────────────────────────────────────────────┘"
-    echo ""
-}
-
-main
+            var providerName = ba
